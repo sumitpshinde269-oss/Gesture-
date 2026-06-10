@@ -1,27 +1,11 @@
 /**
- * CanvasOverlay.jsx — fullscreen transparent VFX canvas.
+ * CanvasOverlay.jsx
  */
 
 import React, { useEffect } from 'react'
+import { syncCanvasSize } from '../utils/canvas.js'
 
-/** @param {HTMLCanvasElement} canvas */
-export function syncCanvasSize(canvas) {
-  const w = canvas.clientWidth || window.innerWidth
-  const h = canvas.clientHeight || window.innerHeight
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
-
-  const pixelW = Math.round(w * dpr)
-  const pixelH = Math.round(h * dpr)
-
-  if (canvas.width !== pixelW || canvas.height !== pixelH) {
-    canvas.width = pixelW
-    canvas.height = pixelH
-    const ctx = canvas.getContext('2d')
-    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  }
-
-  return { width: w, height: h, dpr }
-}
+export { syncCanvasSize }
 
 export function CanvasOverlay({ canvasRef }) {
   useEffect(() => {
@@ -42,12 +26,13 @@ export function CanvasOverlay({ canvasRef }) {
   }, [canvasRef])
 
   return (
-    <canvas
-      ref={canvasRef}
-      id="vfx-canvas"
-      className="vfx-canvas"
-      aria-label="VFX effects overlay canvas"
-      aria-hidden="true"
-    />
+    <div className="vfx-stage" aria-hidden="true">
+      <canvas
+        ref={canvasRef}
+        id="vfx-canvas"
+        className="vfx-canvas"
+        aria-label="VFX effects overlay canvas"
+      />
+    </div>
   )
 }

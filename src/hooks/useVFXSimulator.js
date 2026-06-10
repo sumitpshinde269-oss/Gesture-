@@ -1,5 +1,5 @@
 /**
- * useVFXSimulator.js — hand tracking + gesture → VFX render loop.
+ * useVFXSimulator.js — real-time hand tracking with smoothing + stable gestures.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -10,6 +10,8 @@ import {
   isHandTrackerReady,
 } from '../handTracking/handTracker.js'
 import { detectGesturesFromResult } from '../gestureDetection/gestureDetector.js'
+import { smoothAllHands, smoothPoint } from '../gestureDetection/landmarkSmoother.js'
+import { GestureStabilizer } from '../gestureDetection/gestureStabilizer.js'
 import {
   initVFXEngine,
   syncVFXCanvas,
@@ -19,8 +21,9 @@ import {
   clearSustainedVFX,
   destroyVFXEngine,
 } from '../vfxEngine/vfxEngine.js'
-import { syncCanvasSize } from '../components/CanvasOverlay.jsx'
+import { syncCanvasSize } from '../utils/canvas.js'
 import { isVideoPlaying } from '../webcam/webcamEngine.js'
+import { preloadVisualAssets } from '../assets/vfx/visualAssets.js'
 
 const BOOT_RETRIES = 60
 const BOOT_RETRY_MS = 80
@@ -33,9 +36,6 @@ function getVideoEl() {
   return document.getElementById('webcam-video')
 }
 
-/**
- * @param {{ canvasRef: React.RefObject<HTMLCanvasElement | null>, enabled: boolean }} opts
- */
 export function useVFXSimulator({ canvasRef, enabled }) {
   const [trackerStatus, setTrackerStatus] = useState('idle')
   const [trackerError, setTrackerError] = useState(null)
@@ -47,6 +47,10 @@ export function useVFXSimulator({ canvasRef, enabled }) {
   const lastGestureRef = useRef(null)
   const fpsFramesRef = useRef(0)
   const fpsLastTimeRef = useRef(performance.now())
+  const stabilizerRef = useRef(new GestureStabilizer())
+  const smoothedHandsRef = useRef(null)
+  const smoothedCenterRef = useRef(null)
+  const lastHudUpdateRef = useRef(0)
 
   useEffect(() => {
     if (!enabled) return
@@ -69,6 +73,7 @@ export function useVFXSimulator({ canvasRef, enabled }) {
             initVFXEngine(canvas)
             syncVFXCanvas(canvas)
             await initHandTracker(video)
+            preloadVisualAssets().catch(() => {})
             if (cancelled) return
             setTrackerStatus('ready')
             return
@@ -98,8 +103,11 @@ export function useVFXSimulator({ canvasRef, enabled }) {
       rafRef.current = null
       destroyHandTracker()
       destroyVFXEngine()
-      setTrackerStatus('idle')
+      stabilizerRef.current.reset()
+      smoothedHandsRef.current = null
+      smoothedCenterRef.current = null
       lastGestureRef.current = null
+      setTrackerStatus('idle')
     }
   }, [enabled, canvasRef])
 
@@ -120,24 +128,50 @@ export function useVFXSimulator({ canvasRef, enabled }) {
       }
 
       const result = detectHands(video)
-      const landmarks = result?.landmarks ?? null
-      setHandCount(landmarks?.length ?? 0)
+      const rawLandmarks = result?.landmarks ?? null
 
-      const detected = detectGesturesFromResult(result)
-      setGesture(detected)
+      // Smooth landmarks every animation frame (even when video frame is unchanged)
+      smoothedHandsRef.current = smoothAllHands(
+        smoothedHandsRef.current,
+        rawLandmarks,
+        0.62,
+      )
 
-      if (detected) {
-        if (detected.name !== lastGestureRef.current) {
-          triggerEffectBurst(detected.name, detected.center)
-          lastGestureRef.current = detected.name
+      const smoothedResult = smoothedHandsRef.current
+        ? { ...result, landmarks: smoothedHandsRef.current }
+        : result
+
+      setHandCount(smoothedHandsRef.current?.length ?? 0)
+
+      const rawGesture = detectGesturesFromResult(smoothedResult)
+      let active = stabilizerRef.current.update(rawGesture)
+
+      if (active?.center) {
+        smoothedCenterRef.current = smoothPoint(smoothedCenterRef.current, active.center, 0.48)
+        active = { ...active, center: { ...smoothedCenterRef.current } }
+      } else {
+        smoothedCenterRef.current = null
+      }
+
+      // Update React HUD at most ~20 Hz to avoid unnecessary re-renders
+      if (timestamp - lastHudUpdateRef.current > 50) {
+        setGesture(active)
+        lastHudUpdateRef.current = timestamp
+      }
+
+      if (active?.stable !== false && active) {
+        const hs = active.handScale ?? 1
+        if (active.name !== lastGestureRef.current) {
+          triggerEffectBurst(active.name, active.center, hs)
+          lastGestureRef.current = active.name
         }
-        sustainGestureVFX(detected.name, detected.center, timestamp)
+        sustainGestureVFX(active.name, active.center, timestamp, hs)
       } else {
         if (lastGestureRef.current) clearSustainedVFX()
         lastGestureRef.current = null
       }
 
-      renderFrame(timestamp, landmarks)
+      renderFrame(timestamp, smoothedHandsRef.current, active)
 
       fpsFramesRef.current += 1
       const elapsed = timestamp - fpsLastTimeRef.current

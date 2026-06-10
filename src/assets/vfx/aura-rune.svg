@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <radialGradient id="aura-g" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00ffdd" stop-opacity="0.95"/>
+      <stop offset="45%" stop-color="#7b5cff" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#120033" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="aura-glow">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <circle cx="128" cy="128" r="118" stroke="url(#aura-g)" stroke-width="3" opacity="0.9" filter="url(#aura-glow)"/>
+  <circle cx="128" cy="128" r="92" stroke="#00ffcc" stroke-width="1.5" stroke-dasharray="8 14" opacity="0.75"/>
+  <circle cx="128" cy="128" r="68" stroke="#c084fc" stroke-width="1" stroke-dasharray="4 10" opacity="0.6"/>
+  <path d="M128 24 L132 48 L128 52 L124 48 Z M128 232 L132 208 L128 204 L124 208 Z M24 128 L48 132 L52 128 L48 124 Z M232 128 L208 132 L204 128 L208 124 Z" fill="#00ffdd" opacity="0.85"/>
+  <path d="M128 56 L128 200 M56 128 L200 128" stroke="#00ffcc" stroke-width="0.75" opacity="0.35"/>
+</svg>

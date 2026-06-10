@@ -11,7 +11,7 @@
 
 import React from 'react'
 
-export function PermissionOverlay({ status, error }) {
+export function PermissionOverlay({ status, error, onRetry }) {
   // Don't render if webcam is already active or idle
   if (status === 'active' || status === 'idle') return null
 
@@ -72,7 +72,8 @@ export function PermissionOverlay({ status, error }) {
 
           <button
             id="retry-camera-btn"
-            onClick={() => window.location.reload()}
+            type="button"
+            onClick={() => (onRetry ? onRetry() : window.location.reload())}
             style={{
               marginTop: '0.5rem',
               padding: '0.6rem 1.8rem',

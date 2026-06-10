@@ -1,9 +1,16 @@
 /**
- * vfxEngine.js — high-visibility anime curse-energy VFX on canvas 2D.
+ * vfxEngine.js — anime curse-energy VFX with visual assets + dynamic scaling.
  */
 
 import { clamp, lerp, randomBetween } from '../utils/index.js'
 import { normToCanvas } from '../utils/coordinates.js'
+import { getViewportScale, scaleValue } from '../utils/scaling.js'
+import { HAND_CONNECTIONS, FINGER_TIPS } from '../gestureDetection/gestureDetector.js'
+import {
+  preloadVisualAssets,
+  getVisualAsset,
+  drawSprite,
+} from '../assets/vfx/visualAssets.js'
 
 /** @type {CanvasRenderingContext2D | null} */
 let ctx = null
@@ -11,21 +18,19 @@ let ctx = null
 let canvasEl = null
 let logicalW = 0
 let logicalH = 0
+let viewportScale = 1
 
 let particles = []
 let shockwaves = []
 let lightningBolts = []
-/** @type {{ x: number, y: number, radius: number, rotation: number } | null} */
+/** @type {{ x: number, y: number, radius: number, rotation: number, handScale: number } | null} */
 let activeAura = null
-/** @type {{ x: number, y: number, angle: number, length: number } | null} */
+/** @type {{ x: number, y: number, angle: number, length: number, handScale: number } | null} */
 let activeBeam = null
 let peaceTimer = 0
 let fistPulseTimer = 0
 let frameCount = 0
 
-/**
- * @param {HTMLCanvasElement} canvas
- */
 export function initVFXEngine(canvas) {
   canvasEl = canvas
   syncVFXCanvas(canvas)
@@ -38,11 +43,9 @@ export function initVFXEngine(canvas) {
   peaceTimer = 0
   fistPulseTimer = 0
   frameCount = 0
+  preloadVisualAssets().catch(() => {})
 }
 
-/**
- * @param {HTMLCanvasElement} canvas
- */
 export function syncVFXCanvas(canvas) {
   const w = canvas.clientWidth || window.innerWidth
   const h = canvas.clientHeight || window.innerHeight
@@ -56,75 +59,85 @@ export function syncVFXCanvas(canvas) {
 
   logicalW = w
   logicalH = h
+  viewportScale = getViewportScale(w, h)
   canvasEl = canvas
   if (!ctx && c) ctx = c
 
-  return { width: w, height: h }
+  return { width: w, height: h, viewportScale }
 }
 
 function toPixel(norm) {
   return normToCanvas(norm, logicalW, logicalH)
 }
 
+function eff(base, handScale = 1) {
+  return scaleValue(base, viewportScale, handScale)
+}
+
 function spawnParticle(x, y, opts = {}) {
+  const hs = opts.handScale ?? 1
   particles.push({
     x,
     y,
-    vx: opts.vx ?? Math.cos(opts.angle ?? randomBetween(0, Math.PI * 2)) * (opts.speed ?? 3),
-    vy: opts.vy ?? Math.sin(opts.angle ?? randomBetween(0, Math.PI * 2)) * (opts.speed ?? 3),
+    vx: opts.vx ?? Math.cos(opts.angle ?? randomBetween(0, Math.PI * 2)) * (opts.speed ?? 3) * viewportScale,
+    vy: opts.vy ?? Math.sin(opts.angle ?? randomBetween(0, Math.PI * 2)) * (opts.speed ?? 3) * viewportScale,
     life: opts.life ?? 50,
     maxLife: opts.life ?? 50,
-    size: opts.size ?? randomBetween(4, 10),
+    size: opts.size ?? eff(6, hs),
     color: opts.color ?? '#00ffcc',
     glow: opts.glow !== false,
   })
 }
 
-function spawnLightningFrom(origin) {
+function spawnLightningFrom(origin, handScale = 1) {
+  const reach = eff(55, handScale)
   const segments = [{ x: origin.x, y: origin.y }]
   let lx = origin.x
   let ly = origin.y
   for (let s = 0; s < 10; s++) {
-    lx += randomBetween(20, 55)
-    ly += randomBetween(-70, 70)
+    lx += randomBetween(reach * 0.35, reach)
+    ly += randomBetween(-reach * 1.2, reach * 1.2)
     segments.push({ x: lx, y: ly })
   }
   lightningBolts.push({
     segments,
-    life: 18,
-    width: randomBetween(3, 6),
-    color: '#e8f4ff',
+    life: 22,
+    width: eff(4, handScale),
+    color: '#eef6ff',
+    handScale,
   })
 }
 
-/**
- * Burst when gesture first detected.
- */
-export function triggerEffectBurst(name, normPos) {
+export function triggerEffectBurst(name, normPos, handScale = 1) {
   if (!canvasEl || !logicalW) return
   const pos = toPixel(normPos)
 
   if (name === 'fist') {
-    shockwaves.push({ x: pos.x, y: pos.y, radius: 20, maxRadius: 200, alpha: 1, width: 6 })
-    for (let i = 0; i < 55; i++) {
+    shockwaves.push({
+      x: pos.x,
+      y: pos.y,
+      radius: eff(24, handScale),
+      maxRadius: eff(220, handScale),
+      alpha: 1,
+      width: eff(7, handScale),
+    })
+    for (let i = 0; i < 60; i++) {
       spawnParticle(pos.x, pos.y, {
-        speed: randomBetween(4, 14),
-        life: randomBetween(25, 55),
-        size: randomBetween(5, 14),
-        color: randomBetween(0, 1) > 0.5 ? '#ff6622' : '#ffcc00',
+        speed: randomBetween(4, 16),
+        life: randomBetween(28, 60),
+        size: eff(randomBetween(5, 16), handScale),
+        color: randomBetween(0, 1) > 0.5 ? '#ff6622' : '#ffdd44',
+        handScale,
       })
     }
   }
 
   if (name === 'peace') {
-    for (let b = 0; b < 4; b++) spawnLightningFrom(pos)
+    for (let b = 0; b < 5; b++) spawnLightningFrom(pos, handScale)
   }
 }
 
-/**
- * Sustained VFX while gesture is held — called every frame.
- */
-export function sustainGestureVFX(name, normPos, timestamp) {
+export function sustainGestureVFX(name, normPos, timestamp, handScale = 1) {
   if (!canvasEl || !logicalW) return
   const pos = toPixel(normPos)
   frameCount += 1
@@ -132,19 +145,20 @@ export function sustainGestureVFX(name, normPos, timestamp) {
   switch (name) {
     case 'open_palm':
       activeAura = {
-        x: lerp(activeAura?.x ?? pos.x, pos.x, 0.35),
-        y: lerp(activeAura?.y ?? pos.y, pos.y, 0.35),
-        radius: 110,
-        rotation: (timestamp * 0.002) % (Math.PI * 2),
+        x: lerp(activeAura?.x ?? pos.x, pos.x, 0.38),
+        y: lerp(activeAura?.y ?? pos.y, pos.y, 0.38),
+        radius: eff(130, handScale),
+        rotation: (timestamp * 0.0022) % (Math.PI * 2),
+        handScale,
       }
-      if (frameCount % 3 === 0) {
-        const a = randomBetween(0, Math.PI * 2)
+      if (frameCount % 2 === 0) {
         spawnParticle(activeAura.x, activeAura.y, {
-          angle: a,
-          speed: randomBetween(1, 3),
-          life: 40,
-          size: randomBetween(4, 9),
-          color: '#00ffdd',
+          angle: randomBetween(0, Math.PI * 2),
+          speed: randomBetween(1, 4),
+          life: 45,
+          size: eff(randomBetween(5, 11), handScale),
+          color: randomBetween(0, 1) > 0.5 ? '#00ffdd' : '#c084fc',
+          handScale,
         })
       }
       break
@@ -153,15 +167,23 @@ export function sustainGestureVFX(name, normPos, timestamp) {
       activeAura = null
       activeBeam = null
       fistPulseTimer += 1
-      if (fistPulseTimer % 20 === 0) {
-        shockwaves.push({ x: pos.x, y: pos.y, radius: 15, maxRadius: 160, alpha: 0.95, width: 5 })
+      if (fistPulseTimer % 18 === 0) {
+        shockwaves.push({
+          x: pos.x,
+          y: pos.y,
+          radius: eff(18, handScale),
+          maxRadius: eff(180, handScale),
+          alpha: 0.95,
+          width: eff(6, handScale),
+        })
       }
       if (frameCount % 2 === 0) {
         spawnParticle(pos.x, pos.y, {
-          speed: randomBetween(2, 8),
-          life: 30,
-          size: randomBetween(4, 10),
-          color: '#ff4400',
+          speed: randomBetween(2, 10),
+          life: 32,
+          size: eff(randomBetween(5, 12), handScale),
+          color: '#ff5500',
+          handScale,
         })
       }
       break
@@ -170,7 +192,7 @@ export function sustainGestureVFX(name, normPos, timestamp) {
       activeAura = null
       activeBeam = null
       peaceTimer += 1
-      if (peaceTimer % 6 === 0) spawnLightningFrom(pos)
+      if (peaceTimer % 5 === 0) spawnLightningFrom(pos, handScale)
       break
 
     case 'pinch':
@@ -179,15 +201,17 @@ export function sustainGestureVFX(name, normPos, timestamp) {
         x: pos.x,
         y: pos.y,
         angle: -Math.PI / 2,
-        length: Math.min(logicalW, logicalH) * 0.55,
+        length: Math.min(logicalW, logicalH) * 0.58 * handScale,
+        handScale,
       }
       if (frameCount % 2 === 0) {
         spawnParticle(pos.x, pos.y, {
-          vx: randomBetween(-2, 2),
-          vy: randomBetween(-6, -2),
-          life: 20,
-          size: randomBetween(3, 7),
-          color: '#ff88ff',
+          vx: randomBetween(-3, 3) * viewportScale,
+          vy: randomBetween(-8, -2) * viewportScale,
+          life: 22,
+          size: eff(randomBetween(4, 9), handScale),
+          color: '#f0abfc',
+          handScale,
         })
       }
       break
@@ -206,37 +230,47 @@ export function clearSustainedVFX() {
 
 function drawCurseAura(aura, t) {
   if (!ctx) return
-  const pulse = Math.sin(t * 0.008) * 20
+  const pulse = Math.sin(t * 0.009) * eff(24, aura.handScale)
   const r = aura.radius + pulse
 
   ctx.save()
   ctx.globalCompositeOperation = 'screen'
 
-  const outer = ctx.createRadialGradient(aura.x, aura.y, r * 0.1, aura.x, aura.y, r)
-  outer.addColorStop(0, 'rgba(0, 255, 220, 0.95)')
-  outer.addColorStop(0.35, 'rgba(0, 180, 255, 0.55)')
-  outer.addColorStop(0.7, 'rgba(120, 0, 255, 0.25)')
+  const outer = ctx.createRadialGradient(aura.x, aura.y, r * 0.08, aura.x, aura.y, r)
+  outer.addColorStop(0, 'rgba(0, 255, 230, 1)')
+  outer.addColorStop(0.3, 'rgba(0, 200, 255, 0.65)')
+  outer.addColorStop(0.65, 'rgba(160, 80, 255, 0.35)')
   outer.addColorStop(1, 'rgba(0, 0, 0, 0)')
   ctx.fillStyle = outer
   ctx.beginPath()
   ctx.arc(aura.x, aura.y, r, 0, Math.PI * 2)
   ctx.fill()
 
-  ctx.strokeStyle = 'rgba(0, 255, 200, 0.9)'
-  ctx.lineWidth = 4
+  const rune = getVisualAsset('auraRune')
+  if (rune) {
+    drawSprite(ctx, rune, aura.x, aura.y, r * 2.1, aura.rotation, 0.82)
+    drawSprite(ctx, rune, aura.x, aura.y, r * 1.5, -aura.rotation * 1.4, 0.45)
+  }
+
+  const sigil = getVisualAsset('curseSigil')
+  if (sigil) {
+    drawSprite(ctx, sigil, aura.x, aura.y, r * 0.85, aura.rotation * 0.6, 0.55 + Math.sin(t * 0.006) * 0.2)
+  }
+
+  ctx.strokeStyle = 'rgba(0, 255, 210, 0.95)'
+  ctx.lineWidth = eff(4, aura.handScale)
   ctx.shadowColor = '#00ffcc'
-  ctx.shadowBlur = 24
+  ctx.shadowBlur = eff(28, aura.handScale)
   ctx.beginPath()
-  ctx.arc(aura.x, aura.y, r * 0.72, 0, Math.PI * 2)
+  ctx.arc(aura.x, aura.y, r * 0.74, 0, Math.PI * 2)
   ctx.stroke()
 
-  // Rotating curse-energy arcs
-  for (let i = 0; i < 3; i++) {
-    const start = aura.rotation + (i * Math.PI * 2) / 3
-    ctx.strokeStyle = `rgba(180, 100, 255, ${0.7 + Math.sin(t * 0.01 + i) * 0.2})`
-    ctx.lineWidth = 3
+  for (let i = 0; i < 4; i++) {
+    const start = aura.rotation + (i * Math.PI * 2) / 4
+    ctx.strokeStyle = `rgba(200, 120, 255, ${0.75 + Math.sin(t * 0.012 + i) * 0.2})`
+    ctx.lineWidth = eff(3, aura.handScale)
     ctx.beginPath()
-    ctx.arc(aura.x, aura.y, r * 0.85, start, start + Math.PI * 0.6)
+    ctx.arc(aura.x, aura.y, r * 0.88, start, start + Math.PI * 0.55)
     ctx.stroke()
   }
 
@@ -245,12 +279,17 @@ function drawCurseAura(aura, t) {
 
 function drawShockwave(sw) {
   if (!ctx) return
+  const ring = getVisualAsset('blastRing')
+  if (ring && sw.radius < sw.maxRadius * 0.6) {
+    drawSprite(ctx, ring, sw.x, sw.y, sw.radius * 2.2, 0, sw.alpha * 0.7)
+  }
+
   ctx.save()
   ctx.globalCompositeOperation = 'screen'
-  ctx.strokeStyle = `rgba(255, 140, 30, ${sw.alpha})`
-  ctx.lineWidth = sw.width ?? 4
+  ctx.strokeStyle = `rgba(255, 150, 40, ${sw.alpha})`
+  ctx.lineWidth = sw.width ?? eff(5)
   ctx.shadowColor = '#ff8800'
-  ctx.shadowBlur = 20
+  ctx.shadowBlur = eff(24)
   ctx.beginPath()
   ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2)
   ctx.stroke()
@@ -259,13 +298,21 @@ function drawShockwave(sw) {
 
 function drawLightning(bolt) {
   if (!ctx || bolt.segments.length < 2) return
+
+  const core = getVisualAsset('lightningCore')
+  if (core && bolt.segments.length > 0) {
+    const s0 = bolt.segments[0]
+    drawSprite(ctx, core, s0.x, s0.y, eff(72, bolt.handScale ?? 1), 0, bolt.life / 22)
+  }
+
   ctx.save()
   ctx.globalCompositeOperation = 'screen'
   ctx.strokeStyle = bolt.color
   ctx.lineWidth = bolt.width
   ctx.shadowColor = '#ffffff'
-  ctx.shadowBlur = 28
+  ctx.shadowBlur = eff(32, bolt.handScale ?? 1)
   ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
   ctx.beginPath()
   ctx.moveTo(bolt.segments[0].x, bolt.segments[0].y)
   for (let i = 1; i < bolt.segments.length; i++) {
@@ -284,22 +331,28 @@ function drawBeam(beam) {
   ctx.globalCompositeOperation = 'screen'
   const grad = ctx.createLinearGradient(beam.x, beam.y, endX, endY)
   grad.addColorStop(0, 'rgba(255, 255, 255, 1)')
-  grad.addColorStop(0.3, 'rgba(200, 100, 255, 0.95)')
-  grad.addColorStop(1, 'rgba(100, 0, 255, 0)')
+  grad.addColorStop(0.25, 'rgba(220, 130, 255, 0.98)')
+  grad.addColorStop(0.7, 'rgba(140, 50, 255, 0.5)')
+  grad.addColorStop(1, 'rgba(80, 0, 200, 0)')
   ctx.strokeStyle = grad
-  ctx.lineWidth = 10
-  ctx.shadowColor = '#cc66ff'
-  ctx.shadowBlur = 30
+  ctx.lineWidth = eff(12, beam.handScale)
+  ctx.shadowColor = '#dd88ff'
+  ctx.shadowBlur = eff(36, beam.handScale)
   ctx.lineCap = 'round'
   ctx.beginPath()
   ctx.moveTo(beam.x, beam.y)
   ctx.lineTo(endX, endY)
   ctx.stroke()
 
-  ctx.fillStyle = 'rgba(255, 200, 255, 0.9)'
-  ctx.shadowBlur = 16
+  const sigil = getVisualAsset('curseSigil')
+  if (sigil) {
+    drawSprite(ctx, sigil, beam.x, beam.y, eff(48, beam.handScale), performance.now() * 0.003, 0.75)
+  }
+
+  ctx.fillStyle = 'rgba(255, 230, 255, 1)'
+  ctx.shadowBlur = eff(20, beam.handScale)
   ctx.beginPath()
-  ctx.arc(beam.x, beam.y, 14, 0, Math.PI * 2)
+  ctx.arc(beam.x, beam.y, eff(16, beam.handScale), 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 }
@@ -313,7 +366,7 @@ function drawParticle(p) {
   ctx.fillStyle = p.color
   if (p.glow) {
     ctx.shadowColor = p.color
-    ctx.shadowBlur = 16
+    ctx.shadowBlur = eff(18)
   }
   ctx.beginPath()
   ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
@@ -321,30 +374,102 @@ function drawParticle(p) {
   ctx.restore()
 }
 
-export function drawHandLandmarks(handLandmarks) {
+const GESTURE_COLORS = {
+  open_palm: '#00ffdd',
+  fist: '#ff6622',
+  peace: '#93c5fd',
+  pinch: '#e879f9',
+}
+
+/**
+ * Live hand skeleton + gesture label overlay.
+ * @param {Array<Array<{x:number,y:number}>> | null} handLandmarks
+ * @param {{ name: string, label: string, confidence: number, center: object, fingerState?: object, stable?: boolean } | null} gesture
+ */
+export function drawHandTrackingOverlay(handLandmarks, gesture = null) {
   if (!ctx || !handLandmarks?.length) return
 
+  const accent = gesture?.name ? GESTURE_COLORS[gesture.name] : '#00ffcc'
+
   for (const hand of handLandmarks) {
-    for (const lm of hand) {
-      const p = toPixel(lm)
+    // Skeleton lines
+    ctx.save()
+    ctx.globalCompositeOperation = 'screen'
+    ctx.strokeStyle = 'rgba(0, 255, 200, 0.45)'
+    ctx.lineWidth = eff(2)
+    ctx.lineCap = 'round'
+    for (const [a, b] of HAND_CONNECTIONS) {
+      const pa = toPixel(hand[a])
+      const pb = toPixel(hand[b])
+      ctx.beginPath()
+      ctx.moveTo(pa.x, pa.y)
+      ctx.lineTo(pb.x, pb.y)
+      ctx.stroke()
+    }
+    ctx.restore()
+
+    // Joint dots — extended fingertips glow brighter
+    for (let i = 0; i < hand.length; i++) {
+      const p = toPixel(hand[i])
+      const isTip = FINGER_TIPS.includes(i)
+      const tipToFinger = { 4: 'thumb', 8: 'index', 12: 'middle', 16: 'ring', 20: 'pinky' }
+      const fingerKey = tipToFinger[i]
+      const isExtended = fingerKey && gesture?.fingerState?.[fingerKey]?.extended
+
       ctx.save()
       ctx.globalCompositeOperation = 'screen'
-      ctx.fillStyle = 'rgba(0, 255, 200, 0.85)'
-      ctx.shadowColor = '#00ffcc'
-      ctx.shadowBlur = 10
+      ctx.fillStyle = isExtended ? accent : isTip ? 'rgba(255,255,255,0.85)' : 'rgba(0,255,200,0.55)'
+      ctx.shadowColor = isExtended ? accent : '#00ffcc'
+      ctx.shadowBlur = isExtended ? eff(16) : eff(8)
       ctx.beginPath()
-      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2)
+      ctx.arc(p.x, p.y, isTip ? eff(isExtended ? 8 : 5) : eff(3), 0, Math.PI * 2)
       ctx.fill()
       ctx.restore()
     }
   }
+
+  // Floating gesture badge at palm
+  if (gesture?.center) {
+    const p = toPixel(gesture.center)
+    const pct = Math.round((gesture.confidence ?? 0) * 100)
+    const label = gesture.stable !== false ? gesture.label : `${gesture.label}`
+
+    ctx.save()
+    ctx.globalCompositeOperation = 'screen'
+    ctx.font = `bold ${eff(13)}px 'Segoe UI', sans-serif`
+    const text = `${label}  ${pct}%`
+    const pad = eff(8)
+    const tw = ctx.measureText(text).width
+    const bw = tw + pad * 2
+    const bh = eff(26)
+
+    ctx.fillStyle = 'rgba(0, 10, 20, 0.72)'
+    ctx.strokeStyle = accent
+    ctx.lineWidth = eff(2)
+    ctx.shadowColor = accent
+    ctx.shadowBlur = eff(14)
+    const bx = p.x - bw / 2
+    const by = p.y - eff(55)
+    ctx.beginPath()
+    ctx.roundRect(bx, by, bw, bh, eff(6))
+    ctx.fill()
+    ctx.stroke()
+
+    ctx.shadowBlur = 0
+    ctx.fillStyle = accent
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, p.x, by + bh / 2)
+    ctx.restore()
+  }
 }
 
-/**
- * @param {number} timestamp
- * @param {Array<Array<{x:number,y:number}>> | null} [handLandmarks]
- */
-export function renderFrame(timestamp, handLandmarks = null) {
+/** @deprecated use drawHandTrackingOverlay */
+export function drawHandLandmarks(handLandmarks) {
+  drawHandTrackingOverlay(handLandmarks, null)
+}
+
+export function renderFrame(timestamp, handLandmarks = null, gesture = null) {
   if (!ctx || !canvasEl) return
 
   if (canvasEl.clientWidth && canvasEl.clientHeight) {
@@ -356,24 +481,23 @@ export function renderFrame(timestamp, handLandmarks = null) {
   ctx.clearRect(0, 0, logicalW, logicalH)
 
   if (activeAura) drawCurseAura(activeAura, timestamp)
-
   for (const sw of shockwaves) drawShockwave(sw)
   for (const bolt of lightningBolts) drawLightning(bolt)
   if (activeBeam) drawBeam(activeBeam)
   for (const p of particles) drawParticle(p)
-  if (handLandmarks) drawHandLandmarks(handLandmarks)
+  if (handLandmarks) drawHandTrackingOverlay(handLandmarks, gesture)
 
   particles = particles.filter((p) => {
     p.x += p.vx
     p.y += p.vy
-    p.vy += 0.06
+    p.vy += 0.06 * viewportScale
     p.life -= 1
     return p.life > 0
   })
 
   shockwaves = shockwaves.filter((sw) => {
-    sw.radius += 8
-    sw.alpha *= 0.9
+    sw.radius += 9 * viewportScale
+    sw.alpha *= 0.88
     return sw.alpha > 0.04 && sw.radius < sw.maxRadius
   })
 
@@ -393,14 +517,14 @@ export function destroyVFXEngine() {
   canvasEl = null
   logicalW = 0
   logicalH = 0
+  viewportScale = 1
 }
 
-// Legacy exports kept for compatibility
-export function triggerEffect(name, normPos) {
-  triggerEffectBurst(name, normPos)
-  sustainGestureVFX(name, normPos, performance.now())
+export function triggerEffect(name, normPos, handScale = 1) {
+  triggerEffectBurst(name, normPos, handScale)
+  sustainGestureVFX(name, normPos, performance.now(), handScale)
 }
 
-export function updateEffectAnchor(normPos, gestureName) {
-  sustainGestureVFX(gestureName, normPos, performance.now())
+export function updateEffectAnchor(normPos, gestureName, handScale = 1) {
+  sustainGestureVFX(gestureName, normPos, performance.now(), handScale)
 }

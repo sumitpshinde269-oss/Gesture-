@@ -1,5 +1,5 @@
 /**
- * useWebcam.js — manages webcam lifecycle with callback-ref attachment.
+ * useWebcam.js — webcam lifecycle with retry support.
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
@@ -11,8 +11,10 @@ import {
   isVideoPlaying,
 } from '../webcam/webcamEngine'
 
-const ATTACH_RETRIES = 40
-const ATTACH_RETRY_MS = 50
+const ATTACH_RETRIES = 50
+const ATTACH_RETRY_MS = 80
+const CAMERA_BUSY_RETRIES = 3
+const CAMERA_BUSY_DELAY_MS = 600
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -22,10 +24,20 @@ export function useWebcam() {
   const videoElRef = useRef(null)
   const streamRef = useRef(null)
   const attachGenRef = useRef(0)
+  const [retryToken, setRetryToken] = useState(0)
 
   const [status, setStatus] = useState('requesting')
   const [error, setError] = useState(null)
   const [streamInfo, setStreamInfo] = useState(null)
+
+  const retryCamera = useCallback(() => {
+    stopWebcamStream(streamRef.current)
+    streamRef.current = null
+    attachGenRef.current += 1
+    setError(null)
+    setStatus('requesting')
+    setRetryToken((n) => n + 1)
+  }, [])
 
   const tryAttach = useCallback(async (videoEl, stream, gen) => {
     if (!videoEl || !stream || gen !== attachGenRef.current) return false
@@ -38,7 +50,6 @@ export function useWebcam() {
     return true
   }, [])
 
-  /** Callback ref — attaches stream the instant <video> mounts */
   const setVideoRef = useCallback((node) => {
     videoElRef.current = node
     const stream = streamRef.current
@@ -54,20 +65,34 @@ export function useWebcam() {
     let localStream = null
     const gen = ++attachGenRef.current
 
+    async function acquireStream() {
+      for (let attempt = 0; attempt < CAMERA_BUSY_RETRIES; attempt++) {
+        try {
+          return await requestWebcamStream()
+        } catch (err) {
+          const busy =
+            err?.name === 'NotReadableError' ||
+            err?.name === 'TrackStartError'
+          if (!busy || attempt === CAMERA_BUSY_RETRIES - 1) throw err
+          await delay(CAMERA_BUSY_DELAY_MS * (attempt + 1))
+        }
+      }
+      return null
+    }
+
     async function startWebcam() {
       setStatus('requesting')
       setError(null)
 
       try {
-        localStream = await requestWebcamStream()
-        if (cancelled) {
+        localStream = await acquireStream()
+        if (cancelled || !localStream) {
           stopWebcamStream(localStream)
           return
         }
 
         streamRef.current = localStream
 
-        // Retry until video element exists and is playing
         for (let i = 0; i < ATTACH_RETRIES; i++) {
           if (cancelled || gen !== attachGenRef.current) return
 
@@ -87,13 +112,13 @@ export function useWebcam() {
 
         let message = 'Could not access webcam.'
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          message = 'Camera permission denied. Please allow access and refresh.'
+          message = 'Camera permission denied. Click Retry and allow access.'
         } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-          message = 'No camera found. Please connect a webcam and refresh.'
+          message = 'No camera found. Connect a webcam and click Retry.'
         } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-          message = 'Camera is in use by another application. Close other apps using the camera and retry.'
+          message = 'Camera is busy. Close other tabs/apps using the camera, then click Retry.'
         } else if (err.name === 'AttachError') {
-          message = 'Camera stream received but video failed to start. Please refresh.'
+          message = 'Camera connected but video failed to start. Click Retry.'
         }
 
         stopWebcamStream(localStream)
@@ -111,11 +136,9 @@ export function useWebcam() {
       attachGenRef.current += 1
       const stream = streamRef.current
       streamRef.current = null
-      setTimeout(() => {
-        if (!streamRef.current) stopWebcamStream(stream)
-      }, 250)
+      stopWebcamStream(stream)
     }
-  }, [tryAttach])
+  }, [tryAttach, retryToken])
 
-  return { videoRef: setVideoRef, status, error, streamInfo }
+  return { videoRef: setVideoRef, status, error, streamInfo, retryCamera }
 }
