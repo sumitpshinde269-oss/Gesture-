@@ -229,7 +229,7 @@
   <div id="status">Waiting for hand detection...</div>
 
   <script type="module">
-    import { HandLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs';
+    import { HandLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs';
 
     // --- Keyboard Layout ---
     const ROWS = [
@@ -319,7 +319,7 @@
 
     async function initHandTracking() {
       const vision = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm'
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm'
       );
       handLandmarker = await HandLandmarker.createFromOptions(vision, {
         baseOptions: {
